@@ -249,6 +249,8 @@ def analytics_dashboard():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+     # Clean up stalled jobs automatically
+    cleanup_stalled_jobs()
     db = get_db()
     active_machines = []
     lathe_statuses = []
@@ -549,3 +551,41 @@ def dashboard_status_stream():
     
     return Response(generate(), mimetype="text/event-stream",
                    headers={'Cache-Control': 'no-cache'})
+#------------------ Timeout handler for stalled jobs ------------------
+@app.route('/cleanup/stalled-jobs')
+@login_required
+def cleanup_stalled_jobs():
+    """Clean up jobs that should have completed but status is still 'ongoing'"""
+    db = get_db()
+    current_time = datetime.utcnow()
+    
+    for machine_num in range(1, 21):
+        job_coll = db['Jobs'][f'lathe{machine_num}_job_detail']
+        
+        # Find jobs that are ongoing but should have completed
+        stalled_jobs = job_coll.find({
+            "status": "ongoing",
+            "$expr": {
+                "$lt": [
+                    {"$add": ["$startTime", {"$multiply": ["$estimatedTime", 60000]}]}, # estimatedTime in ms
+                    current_time
+                ]
+            }
+        })
+        
+        for job in stalled_jobs:
+            # Calculate actual duration
+            actual_duration = (current_time - job['startTime']).total_seconds() / 60
+            
+            # Update job to completed
+            job_coll.update_one(
+                {"_id": job["_id"]},
+                {"$set": {
+                    "status": "completed",
+                    "endTime": current_time,
+                    "actualDuration": round(actual_duration, 2)
+                }}
+            )
+            print(f"Cleaned up stalled job: {job['_id']} on {job['machineId']}")
+    
+    return "Stalled jobs cleaned up", 200
