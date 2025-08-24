@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lathe {{ machine_id }} Control</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='lathe.css') }}">
+</head>
+<body>
+    {% include 'navbar.html' %}
+    <div class="control-panel">
+        <h2>Lathe {{ machine_id }} Controls</h2>
+        
+        <div class="button-group">
+            {% if current_user.userType == 'operator' and not under_maintenance %}
+                <a href="{{ url_for('start_simulator', machine_id=machine_id) }}" class="btn">Start Simulator</a>
+            {% endif %}
+            {% if current_user.userType == 'manager' %}
+                <a href="{{ url_for('schedule_maintenance', machine_id=machine_id) }}" class="btn">Schedule Maintenance</a>
+            {% endif %}
+            <a href="{{ url_for('job_history', machine_id=machine_id) }}" class="btn">Job History</a>
+            <a href="{{ url_for('alert_history', machine_id=machine_id) }}" class="btn">Alert History</a>
+            <a href="{{ url_for('add_alert', machine_id=machine_id) }}" 
+               class="btn" 
+               target="_blank" 
+               onclick="window.open(this.href, 'Alert Window', 'width=500,height=400'); return false;">Add Alert</a>
+        </div>
+
+        <!-- Current Status Display -->
+        <div class="status-overview">
+            <h3>Current Status</h3>
+            {% if under_maintenance %}
+                <p><strong>Status:</strong> <span class="status-badge maintenance">Under Maintenance</span></p>
+            {% elif current_job %}
+                <p><strong>Job ID:</strong> {{ current_job.jobId }}</p>
+                <p><strong>Job Type:</strong> {{ current_job.jobType }}</p>
+                <p><strong>Description:</strong> {{ current_job.jobDescription }}</p>
+                <p><strong>Status:</strong>
+                    <span class="status-badge {{ current_job.status|lower }}">
+                        {{ current_job.status|capitalize }}
+                    </span>
+                </p>
+                <p><strong>Operator:</strong> {{ current_job.operatorId }}</p>
+                <p><strong>Estimated Time:</strong> {{ current_job.estimatedTime }} min</p>
+                <p><strong>Started At:</strong> {{ current_job.startTime }}</p>
+                <p><strong>Actual Duration:</strong> {{ current_job.actualDuration }} min</p>
+
+                {% if sensor_data %}
+                    <hr>
+                    <p><strong>Air Temperature:</strong> {{ sensor_data.airTemperature|default(0)|round(1) }} K</p>
+                    <p><strong>Process Temperature:</strong> {{ sensor_data.processTemperature|default(0)|round(1) }} K</p>
+                    <p><strong>Rotational Speed:</strong> {{ sensor_data.rotationalSpeed|default(0)|round(0) }} rpm</p>
+                    <p><strong>Torque:</strong> {{ sensor_data.torque|default(0)|round(2) }} Nm</p>
+                    <p><strong>Tool Wear:</strong> {{ sensor_data.toolWear|default(0)|round(3) }} min</p>
+                    <p><strong>Failure Probability:</strong> {{ (sensor_data.failureProbability|default(0) * 100)|round(2) }} %</p>
+                {% else %}
+                    <p>No sensor data available.</p>
+                {% endif %}
+            {% else %}
+                <p>Lathe is currently idle.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Add this script at the end of body -->
+    <script>
+        function updateSensorData() {
+            fetch("{{ url_for('simulation_status', machine_id=machine_id) }}")
+                .then(response => response.text())
+                .then(data => {
+                    const eventSource = new EventSource("{{ url_for('simulation_status', machine_id=machine_id) }}");
+                    eventSource.onmessage = function(e) {
+                        const data = JSON.parse(e.data);
+                        if (data.status === 'running') {
+                            // Update DOM elements with new data
+                            document.querySelector('[data-airTemperature]').textContent = data.airTemperature.toFixed(1);
+                            document.querySelector('[data-processTemperature]').textContent = data.processTemperature.toFixed(1);
+                            document.querySelector('[data-rotationalSpeed]').textContent = Math.round(data.rotationalSpeed);
+                            document.querySelector('[data-torque]').textContent = data.torque.toFixed(2);
+                            document.querySelector('[data-toolWear]').textContent = data.toolWear.toFixed(3);
+                            document.querySelector('[data-failureProbability]').textContent = (data.failureProbability * 100).toFixed(2);
+                        } else {
+                            eventSource.close();
+                            window.location.reload();  // Refresh when job completes
+                        }
+                    };
+                });
+        }
+
+        // Start updates if job is ongoing
+        {% if current_job and current_job.status == 'ongoing' %}
+            updateSensorData();
+        {% endif %}
+    </script>
+
+</body>
+</html>

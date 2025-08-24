@@ -1,0 +1,28 @@
+{% extends "base.html" %} 
+{% block title %}Current Status - {{ machine_id }}{% endblock %} 
+{% block content %}
+
+{% if current_job %}
+    <h2>Current Job Status</h2>
+    <p><strong>Job ID:</strong> {{ current_job.jobId }}</p>
+    <p><strong>Job Type:</strong> {{ current_job.jobType }}</p>
+    <p><strong>Operator:</strong> {{ current_job.operatorId }}</p>
+    <p><strong>Status:</strong> {{ current_job.status|capitalize }}</p>
+
+    {% if sensor_data %}
+        <h3>Latest Sensor Readings</h3>
+        <p><strong>Air Temperature:</strong> {{ sensor_data.airTemperature|default(0)|round(1) }} K</p>
+        <p><strong>Process Temperature:</strong> {{ sensor_data.processTemperature|default(0)|round(1) }} K</p>
+        <p><strong>Rotational Speed:</strong> {{ sensor_data.rotationalSpeed|default(0)|round(0) }} rpm</p>
+        <p><strong>Torque:</strong> {{ sensor_data.torque|default(0)|round(2) }} Nm</p>
+        <p><strong>Tool Wear:</strong> {{ sensor_data.toolWear|default(0)|round(3) }} min</p>
+        <p><strong>Failure Probability:</strong> {{ (sensor_data.failureProbability|default(0) * 100)|round(2) }} %</p>
+    {% else %}
+        <p>No sensor data available.</p>
+    {% endif %}
+
+{% else %}
+    <p>Lathe is currently idle</p>
+{% endif %}
+
+{% endblock %}
