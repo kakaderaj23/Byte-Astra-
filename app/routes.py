@@ -463,3 +463,89 @@ def simulation_status(machine_id):
             time.sleep(1)
 
     return Response(generate(), mimetype="text/event-stream")
+
+#------------------Live streaming of sensor data------------------
+@app.route('/stream/sensor-data/<machine_id>')
+@login_required
+def sensor_data_stream(machine_id):
+    """Stream real-time sensor data for a specific machine"""
+    collections = get_collections(machine_id)
+    
+    def generate():
+        while True:
+            try:
+                # Get latest sensor data
+                latest_sensor = collections['sensor'].find_one(sort=[("timestamp", -1)])
+                current_job = collections['jobs'].find_one({"status": "ongoing"})
+                
+                if latest_sensor and current_job:
+                    data = {
+                        "status": "active",
+                        "airTemperature": latest_sensor.get("airTemperature", 0),
+                        "processTemperature": latest_sensor.get("processTemperature", 0),
+                        "rotationalSpeed": latest_sensor.get("rotationalSpeed", 0),
+                        "torque": latest_sensor.get("torque", 0),
+                        "toolWear": latest_sensor.get("toolWear", 0),
+                        "failureProbability": latest_sensor.get("failureProbability", 0),
+                        "timestamp": latest_sensor.get("timestamp").isoformat() if latest_sensor.get("timestamp") else None
+                    }
+                else:
+                    data = {"status": "idle"}
+                
+                yield f"data: {json.dumps(data)}\n\n"
+                time.sleep(2)  # Update every 2 seconds
+                
+            except Exception as e:
+                print(f"Error in sensor stream: {e}")
+                yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+                time.sleep(5)
+    
+    return Response(generate(), mimetype="text/event-stream", 
+                   headers={'Cache-Control': 'no-cache'})
+
+@app.route('/stream/dashboard-status')
+@login_required
+def dashboard_status_stream():
+    """Stream real-time status for all lathes on dashboard"""
+    def generate():
+        db = get_db()
+        
+        while True:
+            try:
+                lathe_statuses = []
+                now = datetime.utcnow()
+                
+                for machine_num in range(1, 21):
+                    machine_id = f"LATHE-{machine_num:02d}"
+                    job_coll = db['Jobs'][f'lathe{machine_num}_job_detail']
+                    is_on = bool(job_coll.find_one({"status": "ongoing"}))
+                    
+                    # Check maintenance status
+                    maintenance = lathe_maintenance.get(machine_id)
+                    under_maintenance = False
+                    if maintenance and maintenance['start'] <= now <= maintenance['end']:
+                        under_maintenance = True
+                    elif maintenance and now > maintenance['end']:
+                        del lathe_maintenance[machine_id]
+                    
+                    lathe_statuses.append({
+                        'id': machine_id,
+                        'is_on': is_on,
+                        'under_maintenance': under_maintenance
+                    })
+                
+                data = {
+                    "lathe_statuses": lathe_statuses,
+                    "timestamp": now.isoformat()
+                }
+                
+                yield f"data: {json.dumps(data)}\n\n"
+                time.sleep(3)  # Update every 3 seconds
+                
+            except Exception as e:
+                print(f"Error in dashboard stream: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                time.sleep(5)
+    
+    return Response(generate(), mimetype="text/event-stream",
+                   headers={'Cache-Control': 'no-cache'})

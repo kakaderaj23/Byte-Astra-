@@ -3,30 +3,145 @@
 <head>
     <title>Lathe Machine Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+    <style>
+        .status-dot {
+            transition: all 0.3s ease;
+        }
+        
+        .dashboard-summary {
+            transition: all 0.3s ease;
+        }
+        
+        .lathe-btn {
+            transition: all 0.3s ease;
+        }
+        
+        .lathe-btn:hover {
+            transform: translateY(-2px);
+        }
+    </style>
 </head>
 <body>
     {% include 'navbar.html' %}
+    
     <h1 style="text-align:center;">Lathe Machines Dashboard</h1>
 
     <div class="dashboard-summary">
-        <div>Total Lathes: <strong>{{ total_lathes }}</strong></div>
-        <div>Machines On: <strong style="color:#2ecc40">{{ on_count }}</strong></div>
-        <div>Machines Off: <strong style="color:#ff4136">{{ off_count }}</strong></div>
+        <div>Total Lathes: <strong id="totalLathes">{{ total_lathes }}</strong></div>
+        <div>Machines On: <strong style="color:#2ecc40" id="machinesOn">{{ on_count }}</strong></div>
+        <div>Machines Off: <strong style="color:#ff4136" id="machinesOff">{{ off_count }}</strong></div>
     </div>
 
     <div class="lathe-grid">
         {% for lathe in lathe_statuses %}
             <a href="{{ url_for('lathe_detail', machine_id=lathe.id) }}">
-                <button class="lathe-btn {% if lathe.under_maintenance %}disabled{% endif %}">
+                <button class="lathe-btn {% if lathe.under_maintenance %}disabled{% endif %}" id="btn-{{ lathe.id }}">
                     {{ lathe.id }}
                     <span class="status-dot
                         {% if lathe.under_maintenance %}maintenance
                         {% elif lathe.is_on %}on
-                        {% else %}off{% endif %}">
+                        {% else %}off{% endif %}" id="dot-{{ lathe.id }}">
                     </span>
                 </button>
             </a>
         {% endfor %}
     </div>
+
+    <script>
+        let dashboardEventSource;
+        
+        function startDashboardUpdates() {
+            dashboardEventSource = new EventSource('/stream/dashboard-status');
+            
+            dashboardEventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.error) {
+                        console.error('Dashboard stream error:', data.error);
+                        return;
+                    }
+                    
+                    updateDashboardStatus(data.lathe_statuses);
+                    
+                } catch (error) {
+                    console.error('Error parsing dashboard data:', error);
+                }
+            };
+            
+            dashboardEventSource.onerror = function(event) {
+                console.error('Dashboard EventSource failed:', event);
+                
+                // Attempt to reconnect after 5 seconds silently
+                setTimeout(() => {
+                    if (dashboardEventSource) {
+                        dashboardEventSource.close();
+                    }
+                    startDashboardUpdates();
+                }, 5000);
+            };
+        }
+        
+        function updateDashboardStatus(latheStatuses) {
+            let activeCount = 0;
+            let idleCount = 0;
+            
+            latheStatuses.forEach(lathe => {
+                const statusDot = document.getElementById(`dot-${lathe.id}`);
+                const latheButton = document.getElementById(`btn-${lathe.id}`);
+                
+                if (statusDot && latheButton) {
+                    // Remove all status classes from dot
+                    statusDot.classList.remove('on', 'off', 'maintenance');
+                    
+                    // Remove disabled class from button
+                    latheButton.classList.remove('disabled');
+                    
+                    // Add appropriate status class
+                    if (lathe.under_maintenance) {
+                        statusDot.classList.add('maintenance');
+                        latheButton.classList.add('disabled');
+                    } else if (lathe.is_on) {
+                        statusDot.classList.add('on');
+                        activeCount++;
+                    } else {
+                        statusDot.classList.add('off');
+                        idleCount++;
+                    }
+                }
+            });
+            
+            // Update counters with animation
+            updateCounterWithAnimation('machinesOn', activeCount);
+            updateCounterWithAnimation('machinesOff', idleCount);
+            updateCounterWithAnimation('totalLathes', activeCount + idleCount);
+        }
+        
+        function updateCounterWithAnimation(elementId, newValue) {
+            const element = document.getElementById(elementId);
+            if (element && element.textContent != newValue) {
+                // Add a subtle highlight animation
+                element.style.transform = 'scale(1.1)';
+                element.style.transition = 'all 0.3s ease';
+                
+                setTimeout(() => {
+                    element.textContent = newValue;
+                    element.style.transform = 'scale(1)';
+                }, 150);
+            }
+        }
+        
+        // Start updates when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            startDashboardUpdates();
+        });
+        
+        // Clean up when page unloads
+        window.addEventListener('beforeunload', function() {
+            if (dashboardEventSource) {
+                dashboardEventSource.close();
+            }
+        });
+    </script>
 </body>
 </html>

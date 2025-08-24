@@ -3,10 +3,47 @@
 <head>
     <title>Lathe {{ machine_id }} Control</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='lathe.css') }}">
+    <style>
+        .sensor-value {
+            font-weight: bold;
+            color: #333;
+            transition: all 0.3s ease;
+        }
+        
+        .sensor-value.updated {
+            background-color: #d4edda;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        
+        .live-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 12px;
+            height: 12px;
+            background: #28a745;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .live-indicator.disconnected {
+            background: #dc3545;
+            animation: none;
+        }
+    </style>
 </head>
 <body>
     {% include 'navbar.html' %}
-    <div class="control-panel">
+    <div class="control-panel" style="position: relative;">
+        <div class="live-indicator" id="liveIndicator" title="Live data connection"></div>
+        
         <h2>Lathe {{ machine_id }} Controls</h2>
         
         <div class="button-group">
@@ -18,10 +55,12 @@
             {% endif %}
             <a href="{{ url_for('job_history', machine_id=machine_id) }}" class="btn">Job History</a>
             <a href="{{ url_for('alert_history', machine_id=machine_id) }}" class="btn">Alert History</a>
-            <a href="{{ url_for('add_alert', machine_id=machine_id) }}" 
-               class="btn" 
-               target="_blank" 
-               onclick="window.open(this.href, 'Alert Window', 'width=500,height=400'); return false;">Add Alert</a>
+         <a href="{{ url_for('add_alert', machine_id=machine_id) }}" 
+   class="btn" 
+   target="_blank"
+   onclick="window.open(this.href, 'Alert Window', 'width=500,height=400'); return false;">
+   Add Alert
+</a>
         </div>
 
         <!-- Current Status Display -->
@@ -33,62 +72,141 @@
                 <p><strong>Job ID:</strong> {{ current_job.jobId }}</p>
                 <p><strong>Job Type:</strong> {{ current_job.jobType }}</p>
                 <p><strong>Description:</strong> {{ current_job.jobDescription }}</p>
-                <p><strong>Status:</strong>
-                    <span class="status-badge {{ current_job.status|lower }}">
-                        {{ current_job.status|capitalize }}
-                    </span>
-                </p>
+               <p><strong>Status:</strong>
+    <span class="status-badge {{ current_job.status|lower }}">
+        {{ current_job.status|capitalize }}
+    </span>
+</p>
+
                 <p><strong>Operator:</strong> {{ current_job.operatorId }}</p>
                 <p><strong>Estimated Time:</strong> {{ current_job.estimatedTime }} min</p>
                 <p><strong>Started At:</strong> {{ current_job.startTime }}</p>
                 <p><strong>Actual Duration:</strong> {{ current_job.actualDuration }} min</p>
-
-                {% if sensor_data %}
-                    <hr>
-                    <p><strong>Air Temperature:</strong> {{ sensor_data.airTemperature|default(0)|round(1) }} K</p>
-                    <p><strong>Process Temperature:</strong> {{ sensor_data.processTemperature|default(0)|round(1) }} K</p>
-                    <p><strong>Rotational Speed:</strong> {{ sensor_data.rotationalSpeed|default(0)|round(0) }} rpm</p>
-                    <p><strong>Torque:</strong> {{ sensor_data.torque|default(0)|round(2) }} Nm</p>
-                    <p><strong>Tool Wear:</strong> {{ sensor_data.toolWear|default(0)|round(3) }} min</p>
-                    <p><strong>Failure Probability:</strong> {{ (sensor_data.failureProbability|default(0) * 100)|round(2) }} %</p>
-                {% else %}
-                    <p>No sensor data available.</p>
-                {% endif %}
+                
+                <div id="sensorDataContainer">
+                    {% if sensor_data %}
+                        <hr>
+                        <p><strong>Air Temperature:</strong> <span class="sensor-value" id="airTemp">{{ sensor_data.airTemperature|default(0)|round(1) }}</span> K</p>
+                        <p><strong>Process Temperature:</strong> <span class="sensor-value" id="processTemp">{{ sensor_data.processTemperature|default(0)|round(1) }}</span> K</p>
+                        <p><strong>Rotational Speed:</strong> <span class="sensor-value" id="rotSpeed">{{ sensor_data.rotationalSpeed|default(0)|round(0) }}</span> rpm</p>
+                        <p><strong>Torque:</strong> <span class="sensor-value" id="torque">{{ sensor_data.torque|default(0)|round(2) }}</span> Nm</p>
+                        <p><strong>Tool Wear:</strong> <span class="sensor-value" id="toolWear">{{ sensor_data.toolWear|default(0)|round(3) }}</span> min</p>
+                        <p><strong>Failure Probability:</strong> <span class="sensor-value" id="failureProb">{{ (sensor_data.failureProbability|default(0) * 100)|round(2) }}</span> %</p>
+                        <p><small>Last updated: <span id="lastUpdated">{{ sensor_data.timestamp.strftime('%H:%M:%S') if sensor_data.timestamp else '--' }}</span></small></p>
+                    {% else %}
+                        <hr>
+                        <p><strong>Air Temperature:</strong> <span class="sensor-value" id="airTemp">--</span> K</p>
+                        <p><strong>Process Temperature:</strong> <span class="sensor-value" id="processTemp">--</span> K</p>
+                        <p><strong>Rotational Speed:</strong> <span class="sensor-value" id="rotSpeed">--</span> rpm</p>
+                        <p><strong>Torque:</strong> <span class="sensor-value" id="torque">--</span> Nm</p>
+                        <p><strong>Tool Wear:</strong> <span class="sensor-value" id="toolWear">--</span> min</p>
+                        <p><strong>Failure Probability:</strong> <span class="sensor-value" id="failureProb">--</span> %</p>
+                        <p><small>Last updated: <span id="lastUpdated">--</span></small></p>
+                    {% endif %}
+                </div>
             {% else %}
                 <p>Lathe is currently idle.</p>
             {% endif %}
         </div>
     </div>
 
-    <!-- Add this script at the end of body -->
     <script>
-        function updateSensorData() {
-            fetch("{{ url_for('simulation_status', machine_id=machine_id) }}")
-                .then(response => response.text())
-                .then(data => {
-                    const eventSource = new EventSource("{{ url_for('simulation_status', machine_id=machine_id) }}");
-                    eventSource.onmessage = function(e) {
-                        const data = JSON.parse(e.data);
-                        if (data.status === 'running') {
-                            // Update DOM elements with new data
-                            document.querySelector('[data-airTemperature]').textContent = data.airTemperature.toFixed(1);
-                            document.querySelector('[data-processTemperature]').textContent = data.processTemperature.toFixed(1);
-                            document.querySelector('[data-rotationalSpeed]').textContent = Math.round(data.rotationalSpeed);
-                            document.querySelector('[data-torque]').textContent = data.torque.toFixed(2);
-                            document.querySelector('[data-toolWear]').textContent = data.toolWear.toFixed(3);
-                            document.querySelector('[data-failureProbability]').textContent = (data.failureProbability * 100).toFixed(2);
-                        } else {
-                            eventSource.close();
-                            window.location.reload();  // Refresh when job completes
+        let sensorEventSource;
+        
+        function startSensorUpdates() {
+            // Only start if there's an active job
+            if (document.getElementById('sensorDataContainer')) {
+                sensorEventSource = new EventSource('/stream/sensor-data/{{ machine_id }}');
+                
+                sensorEventSource.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.status === 'active') {
+                            updateSensorData(data);
+                            updateLiveIndicator(true);
+                        } else if (data.status === 'idle') {
+                            // Job completed or machine idle
+                            setTimeout(() => {
+                                location.reload(); // Refresh to show updated job status
+                            }, 2000);
                         }
-                    };
-                });
+                        
+                    } catch (error) {
+                        console.error('Error parsing sensor data:', error);
+                    }
+                };
+                
+                sensorEventSource.onerror = function(event) {
+                    console.error('Sensor EventSource failed:', event);
+                    updateLiveIndicator(false);
+                    
+                    // Attempt to reconnect after 3 seconds
+                    setTimeout(() => {
+                        if (sensorEventSource) {
+                            sensorEventSource.close();
+                        }
+                        startSensorUpdates();
+                    }, 3000);
+                };
+            }
         }
-
-        // Start updates if job is ongoing
-        {% if current_job and current_job.status == 'ongoing' %}
-            updateSensorData();
-        {% endif %}
+        
+        function updateSensorData(data) {
+            const sensors = {
+                'airTemp': data.airTemperature?.toFixed(1),
+                'processTemp': data.processTemperature?.toFixed(1),
+                'rotSpeed': data.rotationalSpeed?.toFixed(0),
+                'torque': data.torque?.toFixed(2),
+                'toolWear': data.toolWear?.toFixed(3),
+                'failureProb': (data.failureProbability * 100)?.toFixed(2)
+            };
+            
+            Object.entries(sensors).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element && value !== undefined) {
+                    // Add visual feedback for updated values
+                    element.classList.add('updated');
+                    element.textContent = value;
+                    
+                    // Remove highlight after animation
+                    setTimeout(() => {
+                        element.classList.remove('updated');
+                    }, 1000);
+                }
+            });
+            
+            // Update timestamp
+            const lastUpdated = document.getElementById('lastUpdated');
+            if (lastUpdated) {
+                lastUpdated.textContent = new Date().toLocaleTimeString();
+            }
+        }
+        
+        function updateLiveIndicator(connected) {
+            const indicator = document.getElementById('liveIndicator');
+            if (indicator) {
+                if (connected) {
+                    indicator.classList.remove('disconnected');
+                    indicator.title = 'Live data connection active';
+                } else {
+                    indicator.classList.add('disconnected');
+                    indicator.title = 'Connection lost - attempting to reconnect';
+                }
+            }
+        }
+        
+        // Start updates when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            startSensorUpdates();
+        });
+        
+        // Clean up when page unloads
+        window.addEventListener('beforeunload', function() {
+            if (sensorEventSource) {
+                sensorEventSource.close();
+            }
+        });
     </script>
 
 </body>
