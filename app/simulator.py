@@ -1,4 +1,4 @@
-from threading import Thread
+from threading import Thread, Event
 from pymongo import MongoClient
 import random
 import time
@@ -7,10 +7,12 @@ from datetime import datetime
 import pickle
 import numpy as np
 
+# Global dictionary to track running simulations and their stop events
+active_simulations = {}
+
 # Load ML model with better error handling
 MODEL_PATH = os.getenv('ML_MODEL_PATH', 'model.pkl')
 ml_model = None
-
 
 print("=" * 50)
 print("SIMULATOR INITIALIZATION")
@@ -90,7 +92,43 @@ def calculate_machine_parameters(material, job_type, tool_diameter):
                   MATERIAL_PROFILES[material]['torque_factor'] * (tool_diameter / 10)
     return base_rpm, base_torque
 
-def generate_sensor_data(machine_id, job_id, duration, material, job_type, tool_no):
+def generate_critical_failure_data(machine_id, job_id, material, job_type, tool_no):
+    """Generate sensor data that indicates >80% failure probability"""
+    material_props = MATERIAL_PROFILES[material]
+    
+    # Generate extreme values that would indicate failure
+    critical_air_temp = 313  # Maximum air temperature (40°C)
+    critical_process_temp = 1073  # Maximum process temperature (800°C)
+    critical_rpm = 200  # Very low RPM indicating problems
+    critical_torque = 60  # Very high torque indicating resistance/blockage
+    critical_tool_wear = 45  # Excessive tool wear
+    
+    # Calculate failure probability (should be >80%)
+    if ml_model is not None:
+        try:
+            features = np.array([[critical_air_temp, critical_process_temp, 
+                               critical_rpm, critical_torque, critical_tool_wear]])
+            failure_prob = ml_model.predict_proba(features)[0][1]
+        except:
+            failure_prob = 0.85  # Fallback high failure probability
+    else:
+        failure_prob = 0.85  # High failure probability when no model
+    
+    return {
+        "machineId": machine_id,
+        "jobId": job_id,
+        "timestamp": datetime.utcnow(),
+        "airTemperature": critical_air_temp,
+        "processTemperature": critical_process_temp,
+        "rotationalSpeed": critical_rpm,
+        "torque": critical_torque,
+        "toolWear": critical_tool_wear,
+        "failureProbability": float(failure_prob),
+        "alertTriggered": True,
+        "criticalFailure": True
+    }
+
+def generate_sensor_data(machine_id, job_id, duration, material, job_type, tool_no, stop_event):
     client = None
     jobs_collection = None
     start_time = None
@@ -131,6 +169,29 @@ def generate_sensor_data(machine_id, job_id, duration, material, job_type, tool_
         data_points_inserted = 0
         
         while time.time() < end_time:
+            # Check if stop event is set (alert triggered)
+            if stop_event.is_set():
+                print(f"🛑 Simulation stopped by alert for {machine_id}")
+                
+                # Inject critical failure data point
+                critical_sensor_data = generate_critical_failure_data(
+                    machine_id, job_id, material, job_type, tool_no
+                )
+                sensor_collection.insert_one(critical_sensor_data)
+                print(f"⚠️ Critical failure data injected for {machine_id}")
+                
+                # Update job status to require maintenance
+                jobs_collection.update_one(
+                    {"_id": job_id},
+                    {"$set": {
+                        "status": "alert_triggered",
+                        "alertTime": datetime.utcnow(),
+                        "requiresMaintenance": True,
+                        "alertMessage": "Machine at risk of failure - immediate maintenance required"
+                    }}
+                )
+                break
+            
             elapsed = (time.time() - start_time) / 60
 
             # Tool wear in minutes
@@ -190,7 +251,8 @@ def generate_sensor_data(machine_id, job_id, duration, material, job_type, tool_
             if remaining > 0:
                 time.sleep(min(5, remaining))
 
-        print(f"✅ Simulation completed for {job_id}. Total data points: {data_points_inserted}")
+        if not stop_event.is_set():
+            print(f"✅ Simulation completed normally for {job_id}")
 
     except Exception as e:
         print(f"❌ Simulation error for {job_id}: {str(e)}")
@@ -203,22 +265,30 @@ def generate_sensor_data(machine_id, job_id, duration, material, job_type, tool_
                 {"$set": {"status": "failed", "error": str(e)}}
             )
     finally:
-        # Always mark job as completed
+        # Clean up simulation tracking
+        if job_id in active_simulations:
+            del active_simulations[job_id]
+        
+        # Always mark job as completed if not already marked as alert_triggered
         if jobs_collection is not None:
             try:
                 actual_duration = None
                 if start_time:
                     actual_duration = round((time.time() - start_time) / 60, 2)
                 
+                # Only update if job is still ongoing
                 completion_result = jobs_collection.update_one(
-                    {"_id": job_id},
+                    {"_id": job_id, "status": "ongoing"},
                     {"$set": {
                         "status": "completed",
                         "endTime": datetime.utcnow(),
                         "actualDuration": actual_duration
                     }}
                 )
-                print(f"✅ Job {job_id} marked as completed")
+                
+                if completion_result.modified_count > 0:
+                    print(f"✅ Job {job_id} marked as completed")
+                    
             except Exception as e:
                 print(f"❌ Failed to mark job as completed: {str(e)}")
         
@@ -227,9 +297,26 @@ def generate_sensor_data(machine_id, job_id, duration, material, job_type, tool_
 
 def start_simulation(machine_id, job_id, duration, material, job_type, tool_no):
     print(f"🎯 Starting simulation thread for {machine_id}")
+    
+    # Create stop event for this simulation
+    stop_event = Event()
+    active_simulations[job_id] = {
+        'machine_id': machine_id,
+        'stop_event': stop_event,
+        'start_time': datetime.utcnow()
+    }
+    
     thread = Thread(target=generate_sensor_data,
-                   args=(machine_id, job_id, duration, material, job_type, tool_no))
+                   args=(machine_id, job_id, duration, material, job_type, tool_no, stop_event))
     thread.daemon = True
     thread.start()
     print(f"🧵 Thread started for job {job_id}")
     return thread
+
+def stop_simulation(job_id):
+    """Stop simulation for a specific job"""
+    if job_id in active_simulations:
+        active_simulations[job_id]['stop_event'].set()
+        print(f"🛑 Stop signal sent to simulation {job_id}")
+        return True
+    return False

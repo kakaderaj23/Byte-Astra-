@@ -12,6 +12,8 @@ import os
 from datetime import datetime
 import json
 import time
+import threading
+from flask import jsonify
 import uuid
 
 # ------------------ Auth Helpers ------------------
@@ -589,3 +591,104 @@ def cleanup_stalled_jobs():
             print(f"Cleaned up stalled job: {job['_id']} on {job['machineId']}")
     
     return "Stalled jobs cleaned up", 200
+
+#------------------ Alert System ------------------
+@app.route('/lathe/<machine_id>/trigger-alert', methods=['POST'])
+@login_required
+def trigger_alert(machine_id):
+    """Trigger alert and stop simulation for the machine"""
+    try:
+        collections = get_collections(machine_id)
+        alert_form = AlertForm()
+        
+        if alert_form.validate_on_submit():
+            # Find current ongoing job
+            current_job = collections['jobs'].find_one({"status": "ongoing"})
+            
+            if current_job:
+                job_id = current_job['_id']
+                
+                # Stop the simulation
+                from app.simulator import stop_simulation
+                simulation_stopped = stop_simulation(job_id)
+                
+                if simulation_stopped:
+                    # Insert alert record
+                    alert_record = {
+                        "machineId": machine_id,
+                        "jobId": job_id,
+                        "timestamp": datetime.utcnow(),
+                        "alertType": "Critical Failure Risk",
+                        "severity": 5,  # Highest severity
+                        "message": alert_form.message.data,
+                        "status": "active",
+                        "triggeredBy": current_user.userID,
+                        "requiresMaintenance": True,
+                        "failureProbability": ">80%"
+                    }
+                    collections['alerts'].insert_one(alert_record)
+                    
+                    flash_message = f'🚨 CRITICAL ALERT: {machine_id} simulation stopped! Failure probability >80%. Immediate maintenance required!'
+                    flash(flash_message, 'critical')
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'Alert triggered successfully',
+                        'notification': {
+                            'title': 'CRITICAL MACHINE FAILURE RISK',
+                            'message': f'{machine_id} requires immediate maintenance. Failure probability exceeds 80%.',
+                            'type': 'critical',
+                            'requiresMaintenance': True
+                        }
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'message': 'No active simulation found to stop'
+                    })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'No ongoing job found for this machine'
+                })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid form data'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error triggering alert: {str(e)}'
+        })
+
+@app.route('/lathe/<machine_id>/alert-status')
+@login_required
+def get_alert_status(machine_id):
+    """Get current alert status for a machine"""
+    try:
+        collections = get_collections(machine_id)
+        
+        # Check for active critical alerts
+        critical_alert = collections['alerts'].find_one({
+            "machineId": machine_id,
+            "severity": 5,
+            "status": "active",
+            "requiresMaintenance": True
+        }, sort=[("timestamp", -1)])
+        
+        # Check job status
+        current_job = collections['jobs'].find_one({"status": {"$in": ["ongoing", "alert_triggered"]}})
+        
+        return jsonify({
+            'hasCriticalAlert': bool(critical_alert),
+            'alertDetails': critical_alert,
+            'jobStatus': current_job['status'] if current_job else None,
+            'requiresMaintenance': current_job.get('requiresMaintenance', False) if current_job else False
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        })

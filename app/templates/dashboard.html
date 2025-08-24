@@ -19,10 +19,95 @@
         .lathe-btn:hover {
             transform: translateY(-2px);
         }
+        
+        /* Critical Alert Notification Styles */
+        .critical-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #dc3545;
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-width: 400px;
+            display: none;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .notification-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+        }
+
+        .notification-body {
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .notification-actions {
+            text-align: right;
+        }
+
+        .btn-maintenance {
+            background: #ffc107;
+            color: #212529;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            font-size: 12px;
+        }
+
+        .btn-maintenance:hover {
+            background: #e0a800;
+        }
+
+        .btn-dismiss {
+            background: transparent;
+            color: white;
+            border: 1px solid white;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-dismiss:hover {
+            background: rgba(255,255,255,0.2);
+        }
     </style>
 </head>
 <body>
     {% include 'navbar.html' %}
+    
+    <!-- Critical Alert Notification -->
+    <div id="criticalNotification" class="critical-notification">
+        <div class="notification-header">
+            🚨 CRITICAL MACHINE FAILURE RISK
+        </div>
+        <div class="notification-body" id="notificationMessage">
+            <!-- Message will be populated by JavaScript -->
+        </div>
+        <div class="notification-actions">
+            <button class="btn-maintenance" onclick="scheduleMaintenance()">
+                Schedule Maintenance
+            </button>
+            <button class="btn-dismiss" onclick="dismissNotification()">
+                Dismiss
+            </button>
+        </div>
+    </div>
     
     <h1 style="text-align:center;">Lathe Machines Dashboard</h1>
 
@@ -131,9 +216,74 @@
             }
         }
         
+        // Critical Alert Functions
+        function checkForCriticalAlerts() {
+            // Get all lathe IDs from a Jinja2-rendered JS array
+            const latheIds = JSON.parse('{{ lathe_statuses | map(attribute="id") | list | tojson | safe }}');
+            latheIds.forEach(function(latheId) {
+                fetch(`/lathe/${latheId}/alert-status`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.hasCriticalAlert && data.requiresMaintenance) {
+                            showCriticalNotification(latheId, data.alertDetails);
+                        }
+                    })
+                    .catch(error => console.error(`Error checking alerts for ${latheId}:`, error));
+            });
+        }
+
+        function showCriticalNotification(machineId, alertDetails) {
+            const notification = document.getElementById('criticalNotification');
+            const message = document.getElementById('notificationMessage');
+            
+            message.innerHTML = `
+                <strong>Machine:</strong> ${machineId}<br>
+                <strong>Issue:</strong> ${alertDetails.message}<br>
+                <strong>Failure Probability:</strong> ${alertDetails.failureProbability}<br>
+                <strong>Time:</strong> ${new Date(alertDetails.timestamp).toLocaleTimeString()}
+            `;
+            
+            notification.style.display = 'block';
+            
+            // Store machine ID for maintenance scheduling
+            notification.setAttribute('data-machine-id', machineId);
+            
+            // Show browser notification if supported
+            if (Notification.permission === 'granted') {
+                new Notification('CRITICAL MACHINE FAILURE RISK', {
+                    body: `${machineId} requires immediate maintenance. Failure probability exceeds 80%.`,
+                    icon: '/static/alert-icon.png'
+                });
+            }
+        }
+
+        function scheduleMaintenance() {
+            const notification = document.getElementById('criticalNotification');
+            const machineId = notification.getAttribute('data-machine-id');
+            
+            if (machineId) {
+                window.location.href = `/lathe/${machineId}/maintenance`;
+            }
+        }
+
+        function dismissNotification() {
+            document.getElementById('criticalNotification').style.display = 'none';
+        }
+        
         // Start updates when page loads
         document.addEventListener('DOMContentLoaded', function() {
             startDashboardUpdates();
+            
+            // Request notification permission
+            if (Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+            
+            // Check for alerts immediately
+            checkForCriticalAlerts();
+            
+            // Check for alerts every 30 seconds
+            setInterval(checkForCriticalAlerts, 30000);
         });
         
         // Clean up when page unloads

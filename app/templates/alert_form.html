@@ -1,21 +1,173 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Add Alert - Lathe {{ lathe_id }}</title>
+    <title>Trigger Critical Alert - {{ machine_id }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='lathe.css') }}">
+    <style>
+        /* Keep your existing styles */
+        .alert-form-container {
+            max-width: 500px;
+            margin: 20px auto;
+            padding: 30px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .critical-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #856404;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .btn-critical {
+            background: #dc3545;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        
+        .btn-critical:hover {
+            background: #c82333;
+        }
+        
+        .notification {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .notification.critical {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        .notification.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+    </style>
 </head>
 <body>
     <div class="alert-form-container">
-    <h2>Create Alert for {{ machine_id }}</h2>
-    <form method="POST" action="{{ url_for('handle_alert', machine_id=machine_id) }}">
-        {{ alert_form.hidden_tag() }}
-        <div class="form-group">
-            {{ alert_form.message.label }}
-            {{ alert_form.message(class="form-control") }}
+        <h2>🚨 Trigger Critical Alert</h2>
+        <h3>{{ machine_id }}</h3>
+        
+        <div class="critical-warning">
+            <strong>⚠️ WARNING:</strong> This action will:
+            <ul>
+                <li>Immediately stop the current simulation</li>
+                <li>Inject critical failure sensor data (>80% failure probability)</li>
+                <li>Mark the machine as requiring immediate maintenance</li>
+                <li>Generate a high-priority maintenance alert</li>
+            </ul>
         </div>
-        <button type="submit" class="btn-alert">Create Alert</button>
-    </form>
-</div>
+        
+        <div id="notification" class="notification"></div>
+        
+        <form id="alertForm" method="POST" action="{{ url_for('trigger_alert', machine_id=machine_id) }}">
+            {{ alert_form.csrf_token }}
+            
+            <div class="form-group">
+                <label for="message">Alert Description:</label>
+                {{ alert_form.message(class="form-control", rows="4", placeholder="Describe the issue that requires immediate attention...") }}
+            </div>
+            
+            <button type="submit" class="btn-critical">
+                🚨 TRIGGER CRITICAL ALERT
+            </button>
+        </form>
+        
+        <p style="margin-top: 20px; font-size: 12px; color: #666;">
+            This action should only be used when machine failure is imminent.
+        </p>
+    </div>
 
+    <script>
+        document.getElementById('alertForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            console.log('Submitting form data:', ...formData);
+            
+            try {
+                const response = await fetch(this.action, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                console.log('Server response:', data);
+                
+                const notification = document.getElementById('notification');
+                notification.style.display = 'block';
+                
+                if (data.success) {
+                    notification.className = 'notification success';
+                    notification.innerHTML = `
+                        <strong>✅ Alert Triggered Successfully!</strong><br>
+                        ${data.message}<br><br>
+                        <strong>🔔 Notification:</strong><br>
+                        <strong>${data.notification.title}</strong><br>
+                        ${data.notification.message}
+                    `;
+                    
+                    // Show browser notification if supported
+                    if (Notification.permission === 'granted') {
+                        new Notification(data.notification.title, {
+                            body: data.notification.message,
+                            icon: '/static/alert-icon.png'
+                        });
+                    }
+                    
+                    // Auto-close window after 5 seconds
+                    setTimeout(() => {
+                        if (window.opener && !window.opener.closed) {
+                            window.opener.location.reload();
+                        }
+                        window.close();
+                    }, 5000);
+                    
+                } else {
+                    notification.className = 'notification critical';
+                    notification.innerHTML = `<strong>❌ Error:</strong> ${data.message}`;
+                }
+                
+            } catch (error) {
+                console.error('Fetch error:', error);
+                const notification = document.getElementById('notification');
+                notification.style.display = 'block';
+                notification.className = 'notification critical';
+                notification.innerHTML = `<strong>❌ Network Error:</strong> ${error.message}`;
+            }
+        });
+        
+        // Request notification permission
+        if (Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    </script>
 </body>
 </html>
