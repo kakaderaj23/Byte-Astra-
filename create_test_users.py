@@ -16,19 +16,19 @@ auth_db = client["AuthDB"]
 users = [
     {
         "employeeId": "EMP001",
-        "userID": "Adwyte",
+        "userID": "Sahil",
         "password": "man123",
         "userType": "manager"
     },
     {
         "employeeId": "EMP002",
-        "userID": "Vikram",
+        "userID": "Rohit",
         "password": "man123",
         "userType": "manager"
     },
     {
         "employeeId": "EMP003",
-        "userID": "Prajwal",
+        "userID": "Yash",
         "password": "op123",
         "userType": "operator"
     },
@@ -40,7 +40,7 @@ users = [
     },
     {
         "employeeId": "EMP005",
-        "userID": "Atharva",
+        "userID": "Jay",
         "password": "op123",
         "userType": "operator"
     }
